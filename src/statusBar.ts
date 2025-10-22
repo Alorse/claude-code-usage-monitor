@@ -63,12 +63,26 @@ export class StatusBarManager {
         try {
             // Use the script from the extension directory, not the user's workspace
             const scriptPath = path.join(this.extensionPath, 'claude_usage_capture.sh');
-            const { stdout } = await execAsync(scriptPath);
+
+            // Get the user's workspace directory to run claude CLI from there
+            // This prevents "Do you trust this folder?" prompts
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+            // Set WORKDIR env variable so the script executes 'claude' in user's workspace
+            const env = {
+                ...process.env,
+                WORKDIR: workspaceFolder || process.cwd()
+            };
+
+            const { stdout } = await execAsync(scriptPath, { env });
 
             const parsed = JSON.parse(stdout.trim());
 
             if (!parsed.ok) {
-                throw new Error(`Script error: ${parsed.error} - ${parsed.hint}`);
+                // Create a more specific error with the error code
+                const errorWithCode = new Error(parsed.hint || 'Unknown error');
+                (errorWithCode as any).code = parsed.error;
+                throw errorWithCode;
             }
 
             return {
@@ -92,10 +106,69 @@ export class StatusBarManager {
             this.updateStatusBar();
         } catch (error) {
             console.error('Error fetching Claude Code usage:', error);
-            this.statusBarItem.text = '$(error) Claude Code Error';
-            this.statusBarItem.tooltip = `Failed to fetch usage: ${error instanceof Error ? error.message : 'Unknown error'}`;
-            this.statusBarItem.color = new vscode.ThemeColor('errorForeground');
-            throw error;
+
+            const errorCode = (error as any).code;
+            let statusText = '$(error) Claude Code Error';
+            let tooltip = '';
+
+            // Handle specific error cases with helpful messages
+            if (errorCode === 'tui_failed_to_boot') {
+                statusText = '$(warning) Claude Code Init Required';
+                tooltip = [
+                    '⚠️ Claude Code needs to be initialized in this workspace',
+                    '',
+                    'To fix this:',
+                    '1. Open a terminal in VS Code',
+                    '2. Run: claude',
+                    '3. Accept the "Do you trust the files in this folder?" prompt',
+                    '4. Exit Claude Code (Ctrl+C)',
+                    '5. Click here to refresh usage data',
+                    '',
+                    'This only needs to be done once per workspace.'
+                ].join('\n');
+            } else if (errorCode === 'auth_required_or_cli_prompted_login') {
+                statusText = '$(key) Claude Code Auth Required';
+                tooltip = [
+                    '🔑 Authentication required',
+                    '',
+                    'To fix this:',
+                    '1. Open a terminal',
+                    '2. Run: claude login',
+                    '3. Follow the authentication steps',
+                    '4. Click here to refresh usage data'
+                ].join('\n');
+            } else if (errorCode === 'claude_cli_not_found') {
+                statusText = '$(warning) Claude CLI Not Found';
+                tooltip = [
+                    '⚠️ Claude CLI is not installed',
+                    '',
+                    'To fix this:',
+                    '1. Install Claude CLI from:',
+                    '   https://docs.claude.com',
+                    '2. Restart VS Code',
+                    '3. Click here to refresh usage data'
+                ].join('\n');
+            } else if (errorCode === 'tmux_not_found') {
+                statusText = '$(warning) tmux Not Found';
+                tooltip = [
+                    '⚠️ tmux is required but not installed',
+                    '',
+                    'To fix this:',
+                    '1. Install tmux:',
+                    '   macOS: brew install tmux',
+                    '   Linux: sudo apt install tmux',
+                    '2. Click here to refresh usage data'
+                ].join('\n');
+            } else {
+                // Generic error
+                tooltip = `Failed to fetch usage: ${error instanceof Error ? error.message : 'Unknown error'}`;
+            }
+
+            this.statusBarItem.text = statusText;
+            this.statusBarItem.tooltip = tooltip;
+            this.statusBarItem.color = new vscode.ThemeColor('editorWarning.foreground');
+
+            // Don't re-throw to prevent error notifications
         }
     }
 
