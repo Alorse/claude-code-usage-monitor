@@ -1,0 +1,62 @@
+{
+  "name": "claude-code-usage-monitor",
+  "displayName": "Claude Code Usage Monitor",
+  "description": "Monitor your Claude Code CLI usage directly in VS Code",
+  "version": "0.0.1",
+  "publisher": "Alorse",
+  "author": {
+    "name": "Alfredo Ortegon",
+    "url": "https://github.com/Alorse"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Alorse/claude-code-usage-monitor.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "claude-code-usage.fetchNow",
+        "title": "Fetch Claude Code Usage Now",
+        "category": "Claude Code"
+      }
+    ],
+    "configuration": {
+      "title": "Claude Code Usage Monitor",
+      "properties": {
+        "claudeCodeUsage.fetchOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically fetch usage data when VS Code starts"
+        },
+        "claudeCodeUsage.autoRefreshMinutes": {
+          "type": "number",
+          "default": 5,
+          "description": "Auto-refresh interval in minutes for checking Claude Code usage"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/node": "18.x.x",
+    "eslint": "^8.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "typescript": "^5.0.0"
+  }
+}
