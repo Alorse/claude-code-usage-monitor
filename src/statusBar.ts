@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import * as path from 'path';
 
 const execAsync = promisify(exec);
 
@@ -23,8 +24,11 @@ interface UsageData {
 export class StatusBarManager {
     private statusBarItem: vscode.StatusBarItem;
     private usageData: UsageData | null = null;
+    private extensionPath: string;
 
     constructor(context: vscode.ExtensionContext) {
+        this.extensionPath = context.extensionPath;
+
         this.statusBarItem = vscode.window.createStatusBarItem(
             vscode.StatusBarAlignment.Right,
             100
@@ -57,9 +61,9 @@ export class StatusBarManager {
      */
     private async executeUsageScript(): Promise<UsageData> {
         try {
-            const { stdout } = await execAsync('./claude_usage_capture.sh', {
-                cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd()
-            });
+            // Use the script from the extension directory, not the user's workspace
+            const scriptPath = path.join(this.extensionPath, 'claude_usage_capture.sh');
+            const { stdout } = await execAsync(scriptPath);
 
             const parsed = JSON.parse(stdout.trim());
 
