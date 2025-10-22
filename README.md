@@ -2,6 +2,8 @@
 
 A VS Code extension that monitors your Claude Code CLI usage directly in the status bar.
 
+![Claude Code Usage Monitor Screenshot](./screenshot.png)
+
 ## Features
 
 - **Status Bar Integration**: Shows current session usage percentage in the VS Code status bar
@@ -25,7 +27,6 @@ A VS Code extension that monitors your Claude Code CLI usage directly in the sta
 1. Clone or download this extension
 2. Run `npm install` in the extension directory
 3. Run `npm run compile` to build the extension
-4. Copy the `claude_usage_capture.sh` script to your workspace root or a location accessible to the extension
 5. Install the extension in VS Code:
    - Open VS Code
    - Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
@@ -58,13 +59,17 @@ This extension uses the provided `claude_usage_capture.sh` script to interact wi
 
 The extension then displays this information in the VS Code status bar with appropriate icons and colors based on usage levels.
 
-## Troubleshooting
+### Error Handling
 
-- **Script not found**: Ensure `claude_usage_capture.sh` is executable and in the correct location
-- **CLI not authenticated**: Run `claude login` to authenticate with Claude Code
-- **tmux not found**: Install tmux (`brew install tmux` on macOS)
-- **Permission denied**: Make sure the script has execute permissions (`chmod +x claude_usage_capture.sh`)
+The extension provides helpful error messages for common scenarios:
+
+- **⚠️ Init Required**: Workspace needs to be initialized with Claude Code
+- **🔑 Auth Required**: Need to run `claude login`
+- **⚠️ CLI Not Found**: Claude Code CLI not installed
+- **⚠️ tmux Not Found**: tmux package not installed
 
 ## License
 
 MIT
+
+**Note**: This is an unofficial extension and is not affiliated with Anthropic or Claude.ai.
