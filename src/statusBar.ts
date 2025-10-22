@@ -51,7 +51,9 @@ export class StatusBarManager {
         const emptyBars = totalBars - filledBars;
 
         const filled = '●'.repeat(filledBars);
+        // const filled = '═'.repeat(filledBars);
         const empty = '○'.repeat(emptyBars);
+        // const empty = '╌'.repeat(emptyBars);
 
         return filled + empty;
     }
@@ -60,6 +62,8 @@ export class StatusBarManager {
      * Execute the claude_usage_capture.sh script and parse the output
      */
     private async executeUsageScript(): Promise<UsageData> {
+        let scriptOutput: string | undefined;
+
         try {
             // Use the script from the extension directory, not the user's workspace
             const scriptPath = path.join(this.extensionPath, 'claude_usage_capture.sh');
@@ -75,26 +79,151 @@ export class StatusBarManager {
             };
 
             const { stdout } = await execAsync(scriptPath, { env });
+            scriptOutput = stdout;
 
-            const parsed = JSON.parse(stdout.trim());
+        } catch (error: any) {
+            console.error('Entraaaaa', error);
+            // execAsync throws when exit code != 0, but script writes JSON to stdout
+            // Check if error has stdout (script ran but exited with error code)
+            if (error.stdout) {
+                scriptOutput = error.stdout;
+            } else {
+                // Handle execution errors (script not found, permission denied, etc.)
+                console.error('Failed to execute usage script:', error);
+                this.statusBarItem.text = '$(error) Script Error';
+                this.statusBarItem.tooltip = `Failed to execute script: ${error instanceof Error ? error.message : 'Unknown error'}`;
+                this.statusBarItem.color = new vscode.ThemeColor('errorForeground');
+                throw error;
+            }
+        }
+
+        // Parse the JSON output (whether from success or error)
+        if (!scriptOutput) {
+            throw new Error('No output from script');
+        }
+
+        try {
+            const parsed = JSON.parse(scriptOutput.trim());
 
             if (!parsed.ok) {
-                // Create a more specific error with the error code
-                const errorWithCode = new Error(parsed.hint || 'Unknown error');
-                (errorWithCode as any).code = parsed.error;
-                throw errorWithCode;
+                // Handle error from script - error code comes as string from JSON
+                const errorCode = parsed.error as string;
+                this.handleScriptError(errorCode, parsed.hint);
+                throw new Error(errorCode);
             }
 
+            // Success - return the data
             return {
                 session_5h: parsed.session_5h,
                 week_all_models: parsed.week_all_models,
                 week_opus: parsed.week_opus,
                 timestamp: new Date()
             };
-        } catch (error) {
-            console.error('Failed to execute usage script:', error);
-            throw error;
+
+        } catch (parseError) {
+            // If we already threw a script error, re-throw it
+            if (parseError instanceof Error && parseError.message.startsWith('Script failed:')) {
+                throw parseError;
+            }
+
+            // JSON parsing failed
+            console.error('Failed to parse script output:', parseError);
+            this.statusBarItem.text = '$(error) Parse Error';
+            this.statusBarItem.tooltip = `Failed to parse script output: ${scriptOutput}`;
+            this.statusBarItem.color = new vscode.ThemeColor('errorForeground');
+            throw parseError;
         }
+    }
+
+    /**
+     * Handle script error codes and update status bar with helpful messages
+     */
+    private handleScriptError(errorCode: string, hint?: string): void {
+        let statusText = '$(error) Claude Code Error';
+        let tooltip = '';
+
+        // Map error codes from the bash script to user-friendly messages
+        switch (errorCode) {
+            case 'tui_failed_to_boot':
+                statusText = '$(warning) Claude Code Init Required';
+                tooltip = [
+                    '⚠️ Claude Code needs to be initialized in this workspace',
+                    '',
+                    'To fix this:',
+                    '1. Open a terminal in VS Code',
+                    '2. Run: claude',
+                    '3. Accept the "Do you trust the files in this folder?" prompt',
+                    '4. Exit Claude Code (Ctrl+C)',
+                    '5. Click here to refresh usage data',
+                    '',
+                    'This only needs to be done once per workspace.'
+                ].join('\n');
+                break;
+
+            case 'auth_required_or_cli_prompted_login':
+                statusText = '$(key) Claude Code Auth Required';
+                tooltip = [
+                    '🔑 Authentication required',
+                    '',
+                    'To fix this:',
+                    '1. Open a terminal',
+                    '2. Run: claude login',
+                    '3. Follow the authentication steps',
+                    '4. Click here to refresh usage data'
+                ].join('\n');
+                break;
+
+            case 'claude_cli_not_found':
+                statusText = '$(warning) Claude CLI Not Found';
+                tooltip = [
+                    '⚠️ Claude CLI is not installed',
+                    '',
+                    'To fix this:',
+                    '1. Install Claude CLI from:',
+                    '   https://docs.claude.com',
+                    '2. Restart VS Code',
+                    '3. Click here to refresh usage data'
+                ].join('\n');
+                break;
+
+            case 'tmux_not_found':
+                statusText = '$(warning) tmux Not Found';
+                tooltip = [
+                    '⚠️ tmux is required but not installed',
+                    '',
+                    'To fix this:',
+                    '1. Install tmux:',
+                    '   macOS: brew install tmux',
+                    '   Linux: sudo apt install tmux',
+                    '2. Click here to refresh usage data'
+                ].join('\n');
+                break;
+
+            case 'parsing_failed':
+                statusText = '$(error) Parsing Failed';
+                tooltip = [
+                    '⚠️ Failed to parse usage data from Claude CLI',
+                    '',
+                    'This may indicate:',
+                    '- Claude CLI was updated and output format changed',
+                    '- Network issues while fetching usage',
+                    '',
+                    'Try:',
+                    '1. Run: claude',
+                    '2. Manually check /usage command works',
+                    '3. Click here to retry'
+                ].join('\n');
+                break;
+
+            default:
+                // Generic error with hint from script
+                tooltip = hint || `Unknown error: ${errorCode}`;
+                break;
+        }
+
+        this.statusBarItem.text = statusText;
+        this.statusBarItem.tooltip = tooltip;
+        this.statusBarItem.color = new vscode.ThemeColor('editorWarning.foreground');
     }
 
     /**
@@ -107,7 +236,8 @@ export class StatusBarManager {
         } catch (error) {
             console.error('Error fetching Claude Code usage:', error);
 
-            const errorCode = (error as any).code;
+            const errorCode = (error as any).message;
+            console.log('Error code:', errorCode);
             let statusText = '$(error) Claude Code Error';
             let tooltip = '';
 
@@ -118,7 +248,7 @@ export class StatusBarManager {
                     '⚠️ Claude Code needs to be initialized in this workspace',
                     '',
                     'To fix this:',
-                    '1. Open a terminal in VS Code',
+                    '1. Open a terminal in your editor',
                     '2. Run: claude',
                     '3. Accept the "Do you trust the files in this folder?" prompt',
                     '4. Exit Claude Code (Ctrl+C)',
@@ -203,39 +333,56 @@ export class StatusBarManager {
         this.statusBarItem.text = `${icon} Claude Code: ${sessionPercent}%`;
         this.statusBarItem.color = color;
 
-        // Create detailed tooltip
-        const tooltipLines: string[] = [];
+        // Create rich tooltip with MarkdownString
+        const tooltip = new vscode.MarkdownString();
+        tooltip.supportThemeIcons = true;
+        tooltip.isTrusted = true;
 
-        // Current session (5-hour) progress bar
+        // Header
+        tooltip.appendMarkdown(`### $(pulse) Claude Code Usage\n\n`);
+
+        // Current session (5-hour)
         const sessionBar = this.createProgressBar(sessionPercent);
-        tooltipLines.push(`Current session (5h)`);
-        tooltipLines.push(`${sessionBar} ${sessionPercent}% used`);
-        tooltipLines.push(`Resets: ${this.usageData.session_5h.resets}`);
+        const sessionEmoji = this.getUsageEmoji(sessionPercent);
+        tooltip.appendMarkdown(`**${sessionEmoji} Current Session (5h)**\n\n`);
+        tooltip.appendMarkdown(`\`${sessionBar}\` **${sessionPercent}%** used\n\n`);
+        tooltip.appendMarkdown(`$(clock) Resets: ${this.usageData.session_5h.resets}\n\n`);
+        tooltip.appendMarkdown(`---\n\n`);
 
-        tooltipLines.push(''); // Empty line for spacing
-
-        // Current week (all models) progress bar
+        // Current week (all models)
         const weekPercent = this.usageData.week_all_models.pct_used;
         const weekBar = this.createProgressBar(weekPercent);
-        tooltipLines.push(`Current week (all models)`);
-        tooltipLines.push(`${weekBar} ${weekPercent}% used`);
-        tooltipLines.push(`Resets: ${this.usageData.week_all_models.resets}`);
+        const weekEmoji = this.getUsageEmoji(weekPercent);
+        tooltip.appendMarkdown(`**${weekEmoji} Current Week (All Models)**\n\n`);
+        tooltip.appendMarkdown(`\`${weekBar}\` **${weekPercent}%** used\n\n`);
+        tooltip.appendMarkdown(`$(calendar) Resets: ${this.usageData.week_all_models.resets}\n\n`);
 
         // Add Opus usage if available and user has access (resets not empty)
         if (this.usageData.week_opus && this.usageData.week_opus.resets) {
-            tooltipLines.push('');
+            tooltip.appendMarkdown(`---\n\n`);
             const opusPercent = this.usageData.week_opus.pct_used;
             const opusBar = this.createProgressBar(opusPercent);
-            tooltipLines.push(`Current week (Opus)`);
-            tooltipLines.push(`${opusBar} ${opusPercent}% used`);
-            tooltipLines.push(`Resets: ${this.usageData.week_opus.resets}`);
+            const opusEmoji = this.getUsageEmoji(opusPercent);
+            tooltip.appendMarkdown(`**${opusEmoji} Current Week (Opus)**\n\n`);
+            tooltip.appendMarkdown(`\`${opusBar}\` **${opusPercent}%** used\n\n`);
+            tooltip.appendMarkdown(`$(calendar) Resets: ${this.usageData.week_opus.resets}\n\n`);
         }
 
-        // Add timestamp
-        tooltipLines.push('');
-        tooltipLines.push(`Last updated: ${this.usageData.timestamp.toLocaleTimeString()}`);
+        // Footer with timestamp
+        tooltip.appendMarkdown(`---\n\n`);
+        tooltip.appendMarkdown(`$(refresh) Last updated: ${this.usageData.timestamp.toLocaleTimeString()}`);
 
-        this.statusBarItem.tooltip = tooltipLines.join('\n');
+        this.statusBarItem.tooltip = tooltip;
+    }
+
+    /**
+     * Get usage emoji based on percentage
+     */
+    private getUsageEmoji(percentage: number): string {
+        if (percentage >= 90) return '🔴';
+        if (percentage >= 75) return '🟠';
+        if (percentage >= 50) return '🟡';
+        return '🟢';
     }
 
     /**
