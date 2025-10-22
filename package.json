@@ -2,7 +2,7 @@
   "name": "claude-code-usage-monitor",
   "displayName": "Claude Code Usage Monitor",
   "description": "Monitor your Claude Code CLI usage directly in VS Code",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "publisher": "Alorse",
   "author": {
     "name": "Alfredo Ortegon",
