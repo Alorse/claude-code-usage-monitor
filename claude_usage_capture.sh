@@ -146,34 +146,60 @@ sleep 0.3
 tmux -L "$LABEL" send-keys -t "$SESSION:0.0" Tab 2>/dev/null
 sleep 0.5
 
-# Capture the usage screen
-usage_output=$(tmux -L "$LABEL" capture-pane -t "$SESSION:0.0" -p -S -300 2>/dev/null || echo "")
-
 # ============================================================================
-# Parse usage output
+# Wait for usage data to load and parse it
 # ============================================================================
 
-# Extract Current session
-session_pct=$(echo "$usage_output" | grep -A2 "Current session" | grep "% used" | sed -E 's/.*[^0-9]([0-9]+)% used.*/\1/' || echo "")
-session_resets=$(echo "$usage_output" | grep -A2 "Current session" | grep "Resets" | sed 's/.*Resets *//' | xargs || echo "")
+# Retry logic for loading data
+MAX_RETRIES=3
+RETRY_DELAY=2
+retry_count=0
 
-# Extract Current week (all models)
-week_all_pct=$(echo "$usage_output" | grep -A2 "Current week (all models)" | grep "% used" | sed -E 's/.*[^0-9]([0-9]+)% used.*/\1/' || echo "")
-week_all_resets=$(echo "$usage_output" | grep -A2 "Current week (all models)" | grep "Resets" | sed 's/.*Resets *//' | xargs || echo "")
+while [ $retry_count -lt $MAX_RETRIES ]; do
+    # Capture the usage screen
+    usage_output=$(tmux -L "$LABEL" capture-pane -t "$SESSION:0.0" -p -S -300 2>/dev/null || echo "")
 
-# Extract Current week (Opus) - may not exist
-if echo "$usage_output" | grep -q "Current week (Opus)"; then
-    week_opus_pct=$(echo "$usage_output" | grep -A2 "Current week (Opus)" | grep "% used" | sed -E 's/.*[^0-9]([0-9]+)% used.*/\1/' || echo "")
-    week_opus_resets=$(echo "$usage_output" | grep -A2 "Current week (Opus)" | grep "Resets" | sed 's/.*Resets *//' | xargs || echo "")
-    week_opus_json="{\"pct_used\": $week_opus_pct, \"resets\": \"$week_opus_resets\"}"
-else
-    week_opus_json="null"
-fi
+    # Check if data is still loading
+    if echo "$usage_output" | grep -q "Loading usage data"; then
+        echo "DEBUG: Usage data still loading, waiting..." >&2
+        sleep "$RETRY_DELAY"
+        ((retry_count++))
+        continue
+    fi
 
-# Validate we got data
+    # Extract Current session
+    session_pct=$(echo "$usage_output" | grep -A2 "Current session" | grep "% used" | sed -E 's/.*[^0-9]([0-9]+)% used.*/\1/' || echo "")
+    session_resets=$(echo "$usage_output" | grep -A2 "Current session" | grep "Resets" | sed 's/.*Resets *//' | xargs || echo "")
+
+    # Extract Current week (all models)
+    week_all_pct=$(echo "$usage_output" | grep -A2 "Current week (all models)" | grep "% used" | sed -E 's/.*[^0-9]([0-9]+)% used.*/\1/' || echo "")
+    week_all_resets=$(echo "$usage_output" | grep -A2 "Current week (all models)" | grep "Resets" | sed 's/.*Resets *//' | xargs || echo "")
+
+    # Extract Current week (Opus) - may not exist
+    if echo "$usage_output" | grep -q "Current week (Opus)"; then
+        week_opus_pct=$(echo "$usage_output" | grep -A2 "Current week (Opus)" | grep "% used" | sed -E 's/.*[^0-9]([0-9]+)% used.*/\1/' || echo "")
+        week_opus_resets=$(echo "$usage_output" | grep -A2 "Current week (Opus)" | grep "Resets" | sed 's/.*Resets *//' | xargs || echo "")
+        week_opus_json="{\"pct_used\": $week_opus_pct, \"resets\": \"$week_opus_resets\"}"
+    else
+        week_opus_json="null"
+    fi
+
+    # Validate we got data
+    if [ -z "$session_pct" ] || [ -z "$week_all_pct" ]; then
+        echo "DEBUG: Failed to parse data (attempt $((retry_count + 1))/$MAX_RETRIES)" >&2
+        sleep "$RETRY_DELAY"
+        ((retry_count++))
+        continue
+    fi
+
+    # Success - we have data!
+    break
+done
+
+# Final validation after retries
 if [ -z "$session_pct" ] || [ -z "$week_all_pct" ]; then
-    echo "$(error_json parsing_failed 'Failed to extract usage data from TUI')"
-    echo "ERROR: Failed to parse usage data" >&2
+    echo "$(error_json parsing_failed 'Failed to extract usage data from TUI after retries')"
+    echo "ERROR: Failed to parse usage data after $MAX_RETRIES retries" >&2
     echo "Captured output:" >&2
     echo "$usage_output" >&2
     exit 16
