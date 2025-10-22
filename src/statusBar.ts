@@ -221,8 +221,8 @@ export class StatusBarManager {
         tooltipLines.push(`${weekBar} ${weekPercent}% used`);
         tooltipLines.push(`Resets: ${this.usageData.week_all_models.resets}`);
 
-        // Add Opus usage if available
-        if (this.usageData.week_opus) {
+        // Add Opus usage if available and user has access (resets not empty)
+        if (this.usageData.week_opus && this.usageData.week_opus.resets) {
             tooltipLines.push('');
             const opusPercent = this.usageData.week_opus.pct_used;
             const opusBar = this.createProgressBar(opusPercent);
