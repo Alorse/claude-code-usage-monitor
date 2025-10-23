@@ -49,7 +49,7 @@ The extension provides the following configuration options (accessible via VS Co
 
 ## How it Works
 
-This extension uses the provided `claude_usage_capture.sh` script to interact with the Claude Code CLI in a headless tmux session. The script was obtained from [jazzyalex/agent-sessions](https://github.com/jazzyalex/agent-sessions) repository, all credits for this script go to jazzyalex (Alexander Malakhov). The script:
+This extension uses the provided `claude_usage_capture.sh` script to interact with the Claude Code CLI in a headless tmux session. The script:
 
 1. Launches Claude Code in a detached tmux session
 2. Waits for the TUI to boot
@@ -67,6 +67,11 @@ The extension provides helpful error messages for common scenarios:
 - **🔑 Auth Required**: Need to run `claude login`
 - **⚠️ CLI Not Found**: Claude Code CLI not installed
 - **⚠️ tmux Not Found**: tmux package not installed
+
+## Credits
+
+- **claude_usage_capture.sh script**: Obtained from [jazzyalex/agent-sessions](https://github.com/jazzyalex/agent-sessions) repository. All credits for this script go to jazzyalex (Alexander Malakhov).
+- **Claude Code CLI**: Developed by Anthropic. This extension monitors usage of their Claude Code CLI tool.
 
 ## License
 
