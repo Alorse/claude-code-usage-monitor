@@ -49,7 +49,7 @@ The extension provides the following configuration options (accessible via VS Co
 
 ## How it Works
 
-This extension uses the provided `claude_usage_capture.sh` script to interact with the Claude Code CLI in a headless tmux session. The script:
+This extension uses the provided `claude_usage_capture.sh` script to interact with the Claude Code CLI in a headless tmux session. The script was obtained from [jazzyalex/agent-sessions](https://github.com/jazzyalex/agent-sessions) repository, all credits for this script go to jazzyalex (Alexander Malakhov). The script:
 
 1. Launches Claude Code in a detached tmux session
 2. Waits for the TUI to boot
