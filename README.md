@@ -1,6 +1,6 @@
 # Claude Code Usage Monitor
 
-A VS Code extension that monitors your Claude Code CLI usage directly in the status bar.
+A VS Code, Cursor, Windsurf extension that monitors your Claude Code CLI usage directly in the status bar.
 
 ![Claude Code Usage Monitor Screenshot](./screenshot.png)
 

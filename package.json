@@ -1,7 +1,7 @@
 {
   "name": "claude-code-usage-monitor",
   "displayName": "Claude Code Usage Monitor",
-  "description": "Monitor your Claude Code CLI usage directly in VS Code",
+  "description": "Monitor your Claude Code CLI usage directly in your editor",
   "version": "0.0.5",
   "publisher": "Alorse",
   "author": {
