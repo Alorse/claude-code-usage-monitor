@@ -27,11 +27,12 @@ A VS Code, Cursor, Windsurf extension that monitors your Claude Code CLI usage d
 1. Clone or download this extension
 2. Run `npm install` in the extension directory
 3. Run `npm run compile` to build the extension
+4. Run `npx vsce package` to generate the `.vsix` file
 5. Install the extension in VS Code:
    - Open VS Code
    - Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
    - Type "Extensions: Install from VSIX"
-   - Select the compiled `.vsix` file
+   - Select the generated `.vsix` file
 
 ## Configuration
 
