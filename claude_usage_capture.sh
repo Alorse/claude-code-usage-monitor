@@ -24,10 +24,10 @@ TIMEOUT_SECS="${TIMEOUT_SECS:-10}"
 SLEEP_BOOT="${SLEEP_BOOT:-0.4}"
 SLEEP_AFTER_USAGE="${SLEEP_AFTER_USAGE:-1.2}"
 WORKDIR="${WORKDIR:-$(pwd)}"
+SESSION_TIMEOUT_HOURS="${SESSION_TIMEOUT_HOURS:-5}"  # Claude sessions last 5 hours
 
-# Unique label to avoid interference
-LABEL="as-cc-$$"
-SESSION="usage"
+# Calculate session timeout in seconds
+SESSION_TIMEOUT_SECS=$((SESSION_TIMEOUT_HOURS * 3600))
 
 # ============================================================================
 # Error handling
@@ -41,10 +41,141 @@ EOF
 }
 
 # ============================================================================
+# Helper functions for session management
+# ============================================================================
+
+# Generate unique session name based on workspace directory
+get_session_name() {
+    local workdir="$1"
+    # Use MD5 hash of workdir to create unique but consistent session name
+    local hash=$(echo -n "$workdir" | md5 -q 2>/dev/null || echo -n "$workdir" | md5sum | cut -d' ' -f1)
+    echo "claude-usage-${hash:0:8}"
+}
+
+# Get timestamp file path for a session
+get_timestamp_file() {
+    local session_name="$1"
+    echo "/tmp/${session_name}.timestamp"
+}
+
+# Check if session exists and is valid (< 5 hours old)
+is_session_valid() {
+    local label="$1"
+    local session_name="$2"
+    local timestamp_file=$(get_timestamp_file "$session_name")
+
+    # Check if session exists
+    if ! tmux -L "$label" has-session -t "$session_name" 2>/dev/null; then
+        echo "DEBUG: Session $session_name does not exist" >&2
+        return 1
+    fi
+
+    # Check timestamp file
+    if [ ! -f "$timestamp_file" ]; then
+        echo "DEBUG: Timestamp file not found for $session_name" >&2
+        return 1
+    fi
+
+    # Read timestamp and check age
+    local session_timestamp=$(cat "$timestamp_file" 2>/dev/null || echo "0")
+    local current_time=$(date +%s)
+    local age=$((current_time - session_timestamp))
+
+    if [ $age -gt $SESSION_TIMEOUT_SECS ]; then
+        echo "DEBUG: Session $session_name is too old (${age}s > ${SESSION_TIMEOUT_SECS}s)" >&2
+        return 1
+    fi
+
+    echo "DEBUG: Session $session_name is valid (age: ${age}s)" >&2
+    return 0
+}
+
+# Perform health check on existing session
+session_health_check() {
+    local label="$1"
+    local session_name="$2"
+
+    # Capture current pane content
+    local output=$(tmux -L "$label" capture-pane -t "$session_name:0.0" -p 2>/dev/null || echo "")
+
+    # Check for Claude indicators (boot message, prompt, etc.)
+    if echo "$output" | grep -qE '(Claude Code v|Try "|Thinking on|tab to toggle|Current session|Status.*Config.*Usage)'; then
+        echo "DEBUG: Session $session_name health check PASSED" >&2
+        return 0
+    fi
+
+    echo "DEBUG: Session $session_name health check FAILED - no Claude indicators found" >&2
+    return 1
+}
+
+# Update timestamp file after successful usage
+update_timestamp() {
+    local session_name="$1"
+    local timestamp_file=$(get_timestamp_file "$session_name")
+    date +%s > "$timestamp_file"
+    echo "DEBUG: Updated timestamp for $session_name" >&2
+}
+
+# Kill session if it exists
+kill_session_if_exists() {
+    local label="$1"
+    local session_name="$2"
+
+    if tmux -L "$label" has-session -t "$session_name" 2>/dev/null; then
+        echo "DEBUG: Killing existing session $session_name" >&2
+        tmux -L "$label" kill-session -t "$session_name" 2>/dev/null || true
+    fi
+}
+
+# Extract status information from Status tab
+extract_status_info() {
+    local status_output="$1"
+
+    # Extract Version
+    local version=$(echo "$status_output" | grep "Version:" | sed 's/.*Version: *//' | xargs || echo "unknown")
+
+    # Extract Login method
+    local login_method=$(echo "$status_output" | grep "Login method:" | sed 's/.*Login method: *//' | xargs || echo "unknown")
+
+    # Extract Organization
+    local organization=$(echo "$status_output" | grep "Organization:" | sed 's/.*Organization: *//' | xargs || echo "unknown")
+
+    # Extract MCP servers - this is more complex as it's a list
+    local mcp_line=$(echo "$status_output" | grep "MCP servers:" | sed 's/.*MCP servers: *//' || echo "")
+    # Parse MCP servers: "clickup ✔,chrome-devtools ✔,..." → ["clickup", "chrome-devtools", ...]
+    local mcp_servers="[]"
+    if [ -n "$mcp_line" ]; then
+        # Remove checkmarks and split by comma
+        local servers=$(echo "$mcp_line" | sed 's/ ✔//g' | sed 's/,/","/g')
+        if [ -n "$servers" ]; then
+            mcp_servers="[\"$servers\"]"
+        fi
+    fi
+
+    # Return JSON object
+    cat <<EOF
+{
+  "version": "$version",
+  "login_method": "$login_method",
+  "organization": "$organization",
+  "mcp_servers": $mcp_servers
+}
+EOF
+}
+
+# ============================================================================
 # Cleanup trap
 # ============================================================================
+# Global flag to track if we should cleanup
+SHOULD_CLEANUP=1
+
 cleanup() {
-    tmux -L "$LABEL" kill-server 2>/dev/null || true
+    if [ "$SHOULD_CLEANUP" -eq 1 ]; then
+        echo "DEBUG: Cleaning up session due to error" >&2
+        tmux -L "$LABEL" kill-server 2>/dev/null || true
+    else
+        echo "DEBUG: Preserving session for reuse" >&2
+    fi
 }
 trap cleanup EXIT
 
@@ -67,65 +198,125 @@ if ! command -v claude &>/dev/null; then
 fi
 
 # ============================================================================
-# Launch Claude in detached tmux
+# Session management: Create or reuse existing session
 # ============================================================================
 
-tmux -L "$LABEL" new-session -d -s "$SESSION" \
-    "cd '$WORKDIR' && env TERM=xterm-256color claude --model $MODEL" 2>/dev/null
+# Generate session name based on workspace
+SESSION=$(get_session_name "$WORKDIR")
+LABEL="$SESSION"  # Use same name for socket label
 
-# Resize pane for predictable rendering
-tmux -L "$LABEL" resize-pane -t "$SESSION:0.0" -x 120 -y 32 2>/dev/null
+echo "DEBUG: Using session name: $SESSION for workspace: $WORKDIR" >&2
 
-# ============================================================================
-# Wait for TUI to boot
-# ============================================================================
+# Check if we can reuse existing session
+SESSION_CREATED=0
+if is_session_valid "$LABEL" "$SESSION"; then
+    echo "DEBUG: Found valid existing session, attempting to reuse" >&2
 
-iterations=0
-max_iterations=$((TIMEOUT_SECS * 10 / 4))  # Convert timeout to iterations
-booted=false
-
-while [ $iterations -lt $max_iterations ]; do
-    sleep "$SLEEP_BOOT"
-    ((iterations++))
-
-    output=$(tmux -L "$LABEL" capture-pane -t "$SESSION:0.0" -p 2>/dev/null || echo "")
-
-    # Check for trust prompt first (handle before boot check)
-    if echo "$output" | grep -q "Do you trust the files in this folder?"; then
-        tmux -L "$LABEL" send-keys -t "$SESSION:0.0" "1" Enter
-        sleep 1.0
-        continue  # Re-check in next iteration
+    # Perform health check
+    if session_health_check "$LABEL" "$SESSION"; then
+        echo "DEBUG: Session health check passed, reusing session" >&2
+        SESSION_CREATED=0
+    else
+        echo "DEBUG: Session health check failed, recreating session" >&2
+        kill_session_if_exists "$LABEL" "$SESSION"
+        SESSION_CREATED=1
     fi
+else
+    echo "DEBUG: No valid session found, creating new session" >&2
+    kill_session_if_exists "$LABEL" "$SESSION"
+    SESSION_CREATED=1
+fi
 
-    # Check for boot indicators
-    if echo "$output" | grep -qE '(Claude Code v|Try "|Thinking on|tab to toggle)'; then
-        # Make sure we're not on the trust prompt
-        if ! echo "$output" | grep -q "Do you trust the files in this folder?"; then
-            booted=true
-            break
-        fi
-    fi
+# Create new session if needed
+if [ $SESSION_CREATED -eq 1 ]; then
+    echo "DEBUG: Creating new Claude session..." >&2
 
-    # Check for auth errors
-    if echo "$output" | grep -qE '(sign in|login|authentication|unauthorized|Please run.*claude login)'; then
-        echo "$(error_json auth_required_or_cli_prompted_login 'Run: claude login')"
-        echo "ERROR: Authentication required" >&2
-        echo "$output" >&2
-        exit 13
-    fi
-done
+    tmux -L "$LABEL" new-session -d -s "$SESSION" \
+        "cd '$WORKDIR' && env TERM=xterm-256color claude --model $MODEL" 2>/dev/null
 
-if [ "$booted" = false ]; then
-    echo "$(error_json tui_failed_to_boot "TUI did not boot within ${TIMEOUT_SECS}s")"
-    echo "ERROR: TUI failed to boot within ${TIMEOUT_SECS}s" >&2
-    last_output=$(tmux -L "$LABEL" capture-pane -t "$SESSION:0.0" -p 2>/dev/null || echo "(capture failed)")
-    echo "Last output:" >&2
-    echo "$last_output" >&2
-    exit 12
+    # Resize pane for predictable rendering
+    tmux -L "$LABEL" resize-pane -t "$SESSION:0.0" -x 120 -y 32 2>/dev/null
+
+    # Update timestamp for new session
+    update_timestamp "$SESSION"
 fi
 
 # ============================================================================
-# Send /usage command and navigate to Usage tab
+# Wait for TUI to boot (only if new session was created)
+# ============================================================================
+
+if [ $SESSION_CREATED -eq 1 ]; then
+    echo "DEBUG: Waiting for new session to boot..." >&2
+
+    iterations=0
+    max_iterations=$((TIMEOUT_SECS * 10 / 4))  # Convert timeout to iterations
+    booted=false
+
+    while [ $iterations -lt $max_iterations ]; do
+        sleep "$SLEEP_BOOT"
+        ((iterations++))
+
+        output=$(tmux -L "$LABEL" capture-pane -t "$SESSION:0.0" -p 2>/dev/null || echo "")
+
+        # Check for trust prompt first (handle before boot check)
+        if echo "$output" | grep -q "Do you trust the files in this folder?"; then
+            tmux -L "$LABEL" send-keys -t "$SESSION:0.0" "1" Enter
+            sleep 1.0
+            continue  # Re-check in next iteration
+        fi
+
+        # Check for boot indicators
+        if echo "$output" | grep -qE '(Claude Code v|Try "|Thinking on|tab to toggle)'; then
+            # Make sure we're not on the trust prompt
+            if ! echo "$output" | grep -q "Do you trust the files in this folder?"; then
+                booted=true
+                break
+            fi
+        fi
+
+        # Check for auth errors
+        if echo "$output" | grep -qE '(sign in|login|authentication|unauthorized|Please run.*claude login)'; then
+            echo "$(error_json auth_required_or_cli_prompted_login 'Run: claude login')"
+            echo "ERROR: Authentication required" >&2
+            echo "$output" >&2
+            exit 13
+        fi
+    done
+
+    if [ "$booted" = false ]; then
+        echo "$(error_json tui_failed_to_boot "TUI did not boot within ${TIMEOUT_SECS}s")"
+        echo "ERROR: TUI failed to boot within ${TIMEOUT_SECS}s" >&2
+        last_output=$(tmux -L "$LABEL" capture-pane -t "$SESSION:0.0" -p 2>/dev/null || echo "(capture failed)")
+        echo "Last output:" >&2
+        echo "$last_output" >&2
+        exit 12
+    fi
+else
+    echo "DEBUG: Reusing existing session, skipping boot wait" >&2
+fi
+
+# ============================================================================
+# Capture Claude status from main screen (before opening /usage dialog)
+# ============================================================================
+
+# Capture main screen to get Claude version and status info
+echo "DEBUG: Capturing Claude status from main screen..." >&2
+main_screen=$(tmux -L "$LABEL" capture-pane -t "$SESSION:0.0" -p -S -300 2>/dev/null || echo "")
+
+# Extract version from header (e.g., "Claude Code v2.0.26")
+version=$(echo "$main_screen" | grep -oE "Claude Code v[0-9]+\.[0-9]+\.[0-9]+" | sed 's/Claude Code v//' || echo "unknown")
+
+# Extract model and plan from header (e.g., "Sonnet 4.5 · Claude Pro")
+login_info=$(echo "$main_screen" | grep -oE "Sonnet.*·.*" | sed 's/ · / - /' || echo "unknown")
+
+# For organization and MCP servers, we'd need to check /usage Status tab
+# For now, set these as optional/unavailable from main screen
+status_json="{\"version\": \"$version\", \"login_method\": \"$login_info\", \"organization\": \"N/A\", \"mcp_servers\": []}"
+
+echo "DEBUG: Claude status captured (version: $version)" >&2
+
+# ============================================================================
+# Send /usage command to get usage data
 # ============================================================================
 
 # Send /usage
@@ -135,16 +326,8 @@ tmux -L "$LABEL" send-keys -t "$SESSION:0.0" "usage" 2>/dev/null
 sleep 0.3
 tmux -L "$LABEL" send-keys -t "$SESSION:0.0" Enter 2>/dev/null
 
-# Wait for settings dialog to open
+# Wait for usage dialog to open (opens directly on Usage tab)
 sleep "$SLEEP_AFTER_USAGE"
-
-# Tab to Usage section (Status [default] -> Config -> Usage = 2 tabs)
-tmux -L "$LABEL" send-keys -t "$SESSION:0.0" Tab 2>/dev/null
-sleep 0.3
-tmux -L "$LABEL" send-keys -t "$SESSION:0.0" Tab 2>/dev/null
-sleep 0.3
-tmux -L "$LABEL" send-keys -t "$SESSION:0.0" Tab 2>/dev/null
-sleep 0.5
 
 # ============================================================================
 # Wait for usage data to load and parse it
@@ -209,10 +392,17 @@ fi
 # Output JSON
 # ============================================================================
 
+# Update timestamp for successful usage
+update_timestamp "$SESSION"
+
+# Don't cleanup session on successful exit - preserve for reuse
+SHOULD_CLEANUP=0
+
 cat <<EOF
 {
   "ok": true,
   "source": "tmux-capture",
+  "status": $status_json,
   "session_5h": {
     "pct_used": $session_pct,
     "resets": "$session_resets"

@@ -6,6 +6,12 @@ import * as path from 'path';
 const execAsync = promisify(exec);
 
 interface UsageData {
+    status?: {
+        version: string;
+        login_method: string;
+        organization: string;
+        mcp_servers: string[];
+    };
     session_5h: {
         pct_used: number;
         resets: string;
