@@ -296,7 +296,7 @@ else
 fi
 
 # ============================================================================
-# Capture Claude status from main screen (before opening /usage dialog)
+# Capture Claude status from main screen and /usage Status tab
 # ============================================================================
 
 # Capture main screen to get Claude version and status info
@@ -306,14 +306,9 @@ main_screen=$(tmux -L "$LABEL" capture-pane -t "$SESSION:0.0" -p -S -300 2>/dev/
 # Extract version from header (e.g., "Claude Code v2.0.26")
 version=$(echo "$main_screen" | grep -oE "Claude Code v[0-9]+\.[0-9]+\.[0-9]+" | sed 's/Claude Code v//' || echo "unknown")
 
-# Extract model and plan from header (e.g., "Sonnet 4.5 · Claude Pro")
-login_info=$(echo "$main_screen" | grep -oE "Sonnet.*·.*" | sed 's/ · / - /' || echo "unknown")
-
-# For organization and MCP servers, we'd need to check /usage Status tab
-# For now, set these as optional/unavailable from main screen
-status_json="{\"version\": \"$version\", \"login_method\": \"$login_info\", \"organization\": \"N/A\", \"mcp_servers\": []}"
-
-echo "DEBUG: Claude status captured (version: $version)" >&2
+# Initialize with main screen data
+organization="N/A"
+mcp_servers_str="[]"
 
 # ============================================================================
 # Send /usage command to get usage data
@@ -328,6 +323,83 @@ tmux -L "$LABEL" send-keys -t "$SESSION:0.0" Enter 2>/dev/null
 
 # Wait for usage dialog to open (opens directly on Usage tab)
 sleep "$SLEEP_AFTER_USAGE"
+
+# ============================================================================
+# Navigate to Status tab to capture organization and MCP servers
+# ============================================================================
+
+echo "DEBUG: Navigating to Status tab..." >&2
+
+# Shift+Tab goes back to Status tab (Usage -> Config -> Status going backwards)
+tmux -L "$LABEL" send-keys -t "$SESSION:0.0" "S-Tab" 2>/dev/null
+sleep 0.3
+# tmux -L "$LABEL" send-keys -t "$SESSION:0.0" "S-Tab" 2>/dev/null
+# sleep 0.3
+# tmux -L "$LABEL" send-keys -t "$SESSION:0.0" "S-Tab" 2>/dev/null
+# sleep 0.5
+
+# Capture Status tab
+echo "DEBUG: Capturing Status tab data..." >&2
+status_tab_output=$(tmux -L "$LABEL" capture-pane -t "$SESSION:0.0" -p -S -300 2>/dev/null || echo "")
+
+# Try to extract organization and MCP servers from Status tab
+if echo "$status_tab_output" | grep -q "Organization:"; then
+    organization=$(echo "$status_tab_output" | grep "Organization:" | sed 's/.*Organization: *//' | xargs || echo "N/A")
+fi
+
+if echo "$status_tab_output" | grep -q "Login method:"; then
+   login_info=$(echo "$status_tab_output" | grep -oE "Login method:.*" | sed 's/.*Login method: *//' | xargs || echo "unknown")
+fi
+
+if echo "$status_tab_output" | grep -q "MCP servers:"; then
+    # Extract MCP servers and convert to JSON array
+    mcp_line=$(echo "$status_tab_output" | grep "MCP servers:" | sed 's/.*MCP servers: *//' | xargs || echo "unknown")
+    echo "MCP servers: $mcp_line" >&2
+
+    if [ -n "$mcp_line" ]; then
+        # Remove checkmarks and trailing comma
+        mcp_clean=$(echo "$mcp_line" | sed 's/ ✔//g' | sed 's/,[ \t]*$//')
+
+        # Simple conversion: comma-separated to JSON array
+        # Replace ", " with "," and quote each item
+        if [ -n "$mcp_clean" ]; then
+            # Use awk for reliable parsing
+            mcp_servers_str=$(echo "$mcp_clean" | awk -F',' '{
+                result = "["
+                for(i=1; i<=NF; i++) {
+                    gsub(/^[ \t]+|[ \t]+$/, "", $i)
+                    if ($i != "") {
+                        if (i > 1) result = result ","
+                        result = result "\"" $i "\""
+                    }
+                }
+                result = result "]"
+                print result
+            }')
+        fi
+
+        # Verify we got a valid JSON array
+        if [ -z "$mcp_servers_str" ] || [ "$mcp_servers_str" = "[]" ] || ! echo "$mcp_servers_str" | grep -q '^\['; then
+            mcp_servers_str="[]"
+        fi
+    fi
+fi
+
+echo "DEBUG: Status tab captured (org: $organization)" >&2
+
+# Navigate back to Usage tab for main parsing
+echo "DEBUG: Navigating back to Usage tab..." >&2
+tmux -L "$LABEL" send-keys -t "$SESSION:0.0" Tab 2>/dev/null
+sleep 0.3
+tmux -L "$LABEL" send-keys -t "$SESSION:0.0" Tab 2>/dev/null
+sleep 0.3
+# tmux -L "$LABEL" send-keys -t "$SESSION:0.0" Tab 2>/dev/null
+# sleep 0.5
+
+# Build final status JSON
+status_json="{\"version\": \"$version\", \"login_method\": \"$login_info\", \"organization\": \"$organization\", \"mcp_servers\": $mcp_servers_str}"
+
+echo "DEBUG: Final status JSON: $status_json" >&2
 
 # ============================================================================
 # Wait for usage data to load and parse it
