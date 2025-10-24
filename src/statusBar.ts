@@ -43,19 +43,34 @@ export class StatusBarManager {
     }
 
     /**
-     * Create a visual progress bar string
+     * Create a beautiful SVG progress bar
      */
     private createProgressBar(percentage: number): string {
-        const totalBars = 20;
-        const filledBars = Math.round((percentage / 100) * totalBars);
-        const emptyBars = totalBars - filledBars;
+        const width = 200;
+        const height = 8;
+        const borderRadius = height / 2;
 
-        const filled = '●'.repeat(filledBars);
-        // const filled = '═'.repeat(filledBars);
-        const empty = '○'.repeat(emptyBars);
-        // const empty = '╌'.repeat(emptyBars);
+        const filledWidth = Math.max(0, Math.min(width, (percentage / 100) * width));
+        const fillColor = this.getUsageColor(percentage);
+        const backgroundColor = '#e0e0e0';
 
-        return filled + empty;
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect x="0" y="0" width="${width}" height="${height}" rx="${borderRadius}" ry="${borderRadius}" fill="${backgroundColor}" />
+  ${filledWidth > 0 ? `<rect x="0" y="0" width="${filledWidth}" height="${height}" rx="${borderRadius}" ry="${borderRadius}" fill="${fillColor}" />` : ''}
+</svg>`;
+
+        const svgBase64 = Buffer.from(svg.trim()).toString('base64');
+        return `<img src="data:image/svg+xml;base64,${svgBase64}" alt="Progress ${percentage}%" width="${width}" height="${height}" />`;
+    }
+
+    /**
+     * Get color based on usage percentage
+     */
+    private getUsageColor(percentage: number): string {
+        if (percentage >= 90) return '#d63031'; // Danger red
+        if (percentage >= 75) return '#f39c12'; // Warning orange
+        if (percentage >= 50) return '#27ae60'; // Caution green
+        return '#3498db'; // Normal blue
     }
 
     /**
@@ -82,7 +97,6 @@ export class StatusBarManager {
             scriptOutput = stdout;
 
         } catch (error: any) {
-            console.error('Entraaaaa', error);
             // execAsync throws when exit code != 0, but script writes JSON to stdout
             // Check if error has stdout (script ran but exited with error code)
             if (error.stdout) {
@@ -333,39 +347,35 @@ export class StatusBarManager {
         this.statusBarItem.text = `${icon} Claude Code: ${sessionPercent}%`;
         this.statusBarItem.color = color;
 
-        // Create rich tooltip with MarkdownString
+        // Create rich tooltip with HTML and Markdown
         const tooltip = new vscode.MarkdownString();
         tooltip.supportThemeIcons = true;
         tooltip.isTrusted = true;
+        tooltip.supportHtml = true;
 
-        // Header
-        tooltip.appendMarkdown(`### $(pulse) Claude Code Usage\n\n`);
+        tooltip.appendMarkdown(`\n\n`);
+        tooltip.appendMarkdown(`<b>$(pulse) Claude Code Usage</b>\n\n`);
 
         // Current session (5-hour)
         const sessionBar = this.createProgressBar(sessionPercent);
-        const sessionEmoji = this.getUsageEmoji(sessionPercent);
-        tooltip.appendMarkdown(`**${sessionEmoji} Current Session (5h)**\n\n`);
-        tooltip.appendMarkdown(`\`${sessionBar}\` **${sessionPercent}%** used\n\n`);
-        tooltip.appendMarkdown(`$(clock) Resets: ${this.usageData.session_5h.resets}\n\n`);
-        tooltip.appendMarkdown(`---\n\n`);
+        tooltip.appendMarkdown(
+            `<div style="padding:10px"><b>Current Session (5h)</b><br/>${sessionBar}&nbsp;&nbsp;<strong>${sessionPercent}% used</strong><br/><small style="font-size:10px;opacity:0.8;line-height:0.9;"><i>Resets ${this.usageData.session_5h.resets}</i></small></div>\n\n`
+        );
 
         // Current week (all models)
         const weekPercent = this.usageData.week_all_models.pct_used;
         const weekBar = this.createProgressBar(weekPercent);
-        const weekEmoji = this.getUsageEmoji(weekPercent);
-        tooltip.appendMarkdown(`**${weekEmoji} Current Week (All Models)**\n\n`);
-        tooltip.appendMarkdown(`\`${weekBar}\` **${weekPercent}%** used\n\n`);
-        tooltip.appendMarkdown(`$(calendar) Resets: ${this.usageData.week_all_models.resets}\n\n`);
+        tooltip.appendMarkdown(
+            `<div style="padding:10px"><b>Current Week (All Models)</b><br/>${weekBar}&nbsp;&nbsp;<strong>${weekPercent}% used</strong><br/><small style="font-size:10px;opacity:0.8;line-height:0.9;"><i>Resets ${this.usageData.week_all_models.resets}</i></small></div>\n\n`
+        );
 
         // Add Opus usage if available and user has access (resets not empty)
         if (this.usageData.week_opus && this.usageData.week_opus.resets) {
-            tooltip.appendMarkdown(`---\n\n`);
             const opusPercent = this.usageData.week_opus.pct_used;
             const opusBar = this.createProgressBar(opusPercent);
-            const opusEmoji = this.getUsageEmoji(opusPercent);
-            tooltip.appendMarkdown(`**${opusEmoji} Current Week (Opus)**\n\n`);
-            tooltip.appendMarkdown(`\`${opusBar}\` **${opusPercent}%** used\n\n`);
-            tooltip.appendMarkdown(`$(calendar) Resets: ${this.usageData.week_opus.resets}\n\n`);
+            tooltip.appendMarkdown(
+                `<div style="padding:10px"><b>Current Week (Opus)</b><br/>${opusBar}&nbsp;&nbsp;<strong>${opusPercent}% used</strong><br/><small style="font-size:10px;opacity:0.8;line-height:0.9;"><i>Resets ${this.usageData.week_opus.resets}</i></small></div>\n\n`
+            );
         }
 
         // Footer with timestamp
@@ -373,16 +383,6 @@ export class StatusBarManager {
         tooltip.appendMarkdown(`$(refresh) Last updated: ${this.usageData.timestamp.toLocaleTimeString()}`);
 
         this.statusBarItem.tooltip = tooltip;
-    }
-
-    /**
-     * Get usage emoji based on percentage
-     */
-    private getUsageEmoji(percentage: number): string {
-        if (percentage >= 90) return '🔴';
-        if (percentage >= 75) return '🟠';
-        if (percentage >= 50) return '🟡';
-        return '🟢';
     }
 
     /**
