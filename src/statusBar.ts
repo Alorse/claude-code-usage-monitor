@@ -100,6 +100,34 @@ export class StatusBarManager {
     }
 
     /**
+     * Create a formatted status section for the tooltip
+     * Shows Claude version, plan, and active MCP servers
+     * @returns Formatted HTML string for the status section
+     */
+    private createStatusSection(): string {
+        if (!this.usageData?.status) {
+            return '';
+        }
+
+        const status = this.usageData.status;
+
+        const sectionDiv = '<br /><div style="padding:10px;border-top:1px solid #ddd;margin-top:10px">';
+        const versionLine = `<small style="font-size:10px;line-height:1.5;"><strong>Claude Code </strong> v${status.version} | `;
+        const planLine = ` ${status.login_method}<br/>`;
+
+        let mcpLine = '';
+        if (status.mcp_servers && status.mcp_servers.length > 0) {
+            mcpLine = `<strong>MCP Servers:</strong> ${status.mcp_servers.join('✔ , ')}</small>`;
+        } else {
+            mcpLine = '</small>';
+        }
+        const closingDiv = '</div>';
+
+        // Combine all parts
+        return sectionDiv + versionLine + planLine + mcpLine + closingDiv + '\n\n';
+    }
+
+    /**
      * Execute the claude_usage_capture.sh script and parse the output
      */
     private async executeUsageScript(): Promise<UsageData> {
@@ -154,6 +182,7 @@ export class StatusBarManager {
 
             // Success - return the data
             return {
+                status: parsed.status,
                 session_5h: parsed.session_5h,
                 week_all_models: parsed.week_all_models,
                 week_opus: parsed.week_opus,
@@ -415,6 +444,9 @@ export class StatusBarManager {
             );
             tooltip.appendMarkdown(`\n\n`);
         }
+
+        // Add Claude status information if available
+        tooltip.appendMarkdown(this.createStatusSection());
 
         // Footer with timestamp
         tooltip.appendMarkdown(`$(refresh) Last updated: ${this.usageData.timestamp.toLocaleTimeString()}`);
