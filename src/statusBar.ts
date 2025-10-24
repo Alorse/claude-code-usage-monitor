@@ -74,6 +74,26 @@ export class StatusBarManager {
     }
 
     /**
+     * Create a formatted usage section for the tooltip
+     * @param title - Section title (e.g., "Current Session (5h)")
+     * @param percentage - Usage percentage (0-100)
+     * @param resetInfo - Reset time information
+     * @returns Formatted HTML string for the section
+     */
+    private createUsageSection(title: string, percentage: number, resetInfo: string): string {
+
+        const progressBar = this.createProgressBar(percentage);
+        const sectionDiv = '<div style="padding:10px">';
+        const titleLine = `<b>${title}</b><br/>`;
+        const progressLine = `${progressBar}&nbsp;&nbsp;<strong>${percentage}% used</strong><br/>`;
+        const resetLine = `<small style="font-size:10px;opacity:0.8;line-height:0.9;"><i>Resets ${resetInfo}</i></small>`;
+        const closingDiv = '</div>';
+
+        // Combine all parts
+        return sectionDiv + titleLine + progressLine + resetLine + closingDiv + '\n\n';
+    }
+
+    /**
      * Execute the claude_usage_capture.sh script and parse the output
      */
     private async executeUsageScript(): Promise<UsageData> {
@@ -357,29 +377,40 @@ export class StatusBarManager {
         tooltip.appendMarkdown(`<b>$(pulse) Claude Code Usage</b>\n\n`);
 
         // Current session (5-hour)
-        const sessionBar = this.createProgressBar(sessionPercent);
         tooltip.appendMarkdown(
-            `<div style="padding:10px"><b>Current Session (5h)</b><br/>${sessionBar}&nbsp;&nbsp;<strong>${sessionPercent}% used</strong><br/><small style="font-size:10px;opacity:0.8;line-height:0.9;"><i>Resets ${this.usageData.session_5h.resets}</i></small></div>\n\n`
+            this.createUsageSection(
+                'Current Session (5h)',
+                sessionPercent,
+                this.usageData.session_5h.resets
+            )
         );
+        tooltip.appendMarkdown(`\n\n`);
 
         // Current week (all models)
         const weekPercent = this.usageData.week_all_models.pct_used;
-        const weekBar = this.createProgressBar(weekPercent);
         tooltip.appendMarkdown(
-            `<div style="padding:10px"><b>Current Week (All Models)</b><br/>${weekBar}&nbsp;&nbsp;<strong>${weekPercent}% used</strong><br/><small style="font-size:10px;opacity:0.8;line-height:0.9;"><i>Resets ${this.usageData.week_all_models.resets}</i></small></div>\n\n`
+            this.createUsageSection(
+                'Current Week (All Models)',
+                weekPercent,
+                this.usageData.week_all_models.resets
+            )
         );
+        tooltip.appendMarkdown(`\n\n`);
 
         // Add Opus usage if available and user has access (resets not empty)
         if (this.usageData.week_opus && this.usageData.week_opus.resets) {
             const opusPercent = this.usageData.week_opus.pct_used;
-            const opusBar = this.createProgressBar(opusPercent);
             tooltip.appendMarkdown(
-                `<div style="padding:10px"><b>Current Week (Opus)</b><br/>${opusBar}&nbsp;&nbsp;<strong>${opusPercent}% used</strong><br/><small style="font-size:10px;opacity:0.8;line-height:0.9;"><i>Resets ${this.usageData.week_opus.resets}</i></small></div>\n\n`
+                this.createUsageSection(
+                    'Current Week (Opus)',
+                    opusPercent,
+                    this.usageData.week_opus.resets
+                )
             );
+            tooltip.appendMarkdown(`\n\n`);
         }
 
         // Footer with timestamp
-        tooltip.appendMarkdown(`---\n\n`);
         tooltip.appendMarkdown(`$(refresh) Last updated: ${this.usageData.timestamp.toLocaleTimeString()}`);
 
         this.statusBarItem.tooltip = tooltip;
