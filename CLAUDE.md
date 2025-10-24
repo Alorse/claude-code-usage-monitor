@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a TypeScript-based VSCode extension that monitors Claude Code CLI usage directly in VS Code. It's part of a dual-extension structure:
 - **Parent directory** (`../`): JavaScript-based extension using Puppeteer to scrape Claude.ai web interface (v2.0.13)
-- **This directory**: TypeScript-based extension using shell script to capture Claude Code CLI usage (v0.0.1)
+- **This directory**: TypeScript-based extension using shell script to capture Claude Code CLI usage (v0.0.5)
 
 Both extensions share similar architecture but use different data sources:
 - Parent: Web scraping via Puppeteer → Claude.ai monthly usage
@@ -58,6 +58,28 @@ Manages the status bar UI component that displays usage information:
 - Clickable to trigger manual refresh
 - Tooltip with detailed information
 
+**Key Methods:**
+- `executeUsageScript()`: Spawns the shell script, handles both success and error responses
+- `handleScriptError()`: Maps error codes from the shell script to user-friendly messages
+- `fetchUsage()`: Public API to trigger a fetch operation; handles errors gracefully
+- `updateStatusBar()`: Renders the status bar with usage data, progress bars, and tooltips
+- `createProgressBar()`: Generates a visual bar representation of usage percentages
+
+### Data Flow & Error Handling
+
+The extension implements a sophisticated error handling system with specific error codes:
+
+**Happy Path**: Extension activation → Shell script execution → JSON parsing → Status bar update
+
+**Error Handling**: When the shell script encounters issues, it returns JSON with `ok: false` and an error code:
+- `tui_failed_to_boot`: Claude TUI didn't initialize (requires `claude` init in workspace)
+- `auth_required_or_cli_prompted_login`: Claude CLI authentication needed (`claude login`)
+- `claude_cli_not_found`: Claude CLI not installed on system
+- `tmux_not_found`: tmux package not available
+- `parsing_failed`: Unable to parse usage data from CLI output
+
+Each error code maps to a helpful tooltip with instructions for the user, displayed in the status bar with appropriate icons and colors.
+
 ### Data Fetching Strategy
 
 Unlike the parent extension's Puppeteer approach, this variant uses:
@@ -78,9 +100,23 @@ Available in VS Code settings under "Claude Code Usage Monitor":
 ```json
 {
   "claudeCodeUsage.fetchOnStartup": true,      // Auto-fetch on startup
-  "claudeCodeUsage.autoRefreshMinutes": 5      // Refresh interval
+  "claudeCodeUsage.autoRefreshMinutes": 5      // Refresh interval (0 disables auto-refresh)
 }
 ```
+
+## Environment Variables
+
+The extension passes environment variables to the shell script:
+- `WORKDIR`: Set to the user's workspace folder to ensure `claude` commands run from the correct directory. This prevents "Do you trust this folder?" prompts and ensures the CLI operates in the expected context.
+
+## Extension Integration Points
+
+The extension integrates with VS Code through these mechanisms:
+- **Activation Event**: `onStartupFinished` - Activates after VS Code fully initializes
+- **Status Bar**: Right-aligned item with priority 100, clickable to trigger manual refresh
+- **Commands**: `claude-code-usage.fetchNow` - Exposed in command palette as "Fetch Claude Code Usage Now"
+- **Configuration**: Workspace-aware settings that update live via `onDidChangeConfiguration` listener
+- **Auto-refresh**: Timer-based polling that respects configuration changes without restarting extension
 
 ## Key Architectural Differences from Parent
 
@@ -147,11 +183,30 @@ This maintains a clean directory structure with version history preserved.
 ## VS Code API Usage
 
 This extension uses:
-- `vscode.window.createStatusBarItem()` - Status bar UI
-- `vscode.commands.registerCommand()` - Command registration
-- `vscode.workspace.getConfiguration()` - Settings access
-- `vscode.window.showInformationMessage()` - User notifications
-- Timer-based auto-refresh using `setInterval()`
+- `vscode.window.createStatusBarItem()` - Status bar UI with theme colors and markdown tooltips
+- `vscode.commands.registerCommand()` - Command registration for manual refresh
+- `vscode.workspace.getConfiguration()` - Settings access with live change listeners
+- `vscode.workspace.workspaceFolders` - Retrieves workspace folder for WORKDIR environment variable
+- `vscode.ThemeColor()` - Color-coded status bar based on usage levels
+- `vscode.MarkdownString()` - Rich formatted tooltips with progress bars and emojis
+- Timer-based auto-refresh using `setInterval()` with proper cleanup on deactivation
+
+## Debugging the Extension
+
+To debug the extension:
+
+1. **Open Extension Development Host**: Press F5 in VS Code (with the extension folder open)
+2. **View Console Output**: In the development host window, open Developer Tools (Help → Toggle Developer Tools)
+3. **Check Extension Logs**: Look for logs from `console.log()` calls in `extension.ts` and `statusBar.ts`
+4. **Debug Script Execution**: The shell script output is parsed as JSON; check `statusBar.ts` line ~100-106 for parsing logic
+5. **Error Investigation**: When errors occur, the extension logs them with `console.error()` - check the console for detailed error messages
+6. **Configuration Changes**: Test configuration updates by opening VS Code Settings and changing `autoRefreshMinutes` - watch the console for "Auto-refresh interval updated" messages
+
+**Common Issues During Development:**
+- If the extension doesn't activate, verify `onStartupFinished` event is firing
+- If status bar doesn't update, check that `StatusBarManager.fetchUsage()` completes without throwing
+- If tooltips don't show, verify `UsageData` interface matches shell script JSON output
+- If auto-refresh doesn't work, check that timer intervals are calculated correctly (`minutes * 60 * 1000`)
 
 ## Testing Considerations
 
@@ -164,12 +219,31 @@ When testing this extension:
 6. Test configuration changes take effect
 7. Check error handling when CLI is unavailable
 
+## Key Architectural Decisions
+
+**Why Shell Script Instead of Direct CLI?**
+Using a tmux-based shell script approach (rather than spawning Claude CLI directly) provides:
+- Headless TUI interaction without blocking the extension
+- Ability to control stdin/stdout in a detached session
+- Isolation of CLI state from the extension process
+- Graceful timeout handling and process cleanup
+
+**Error Propagation Pattern:**
+The shell script returns JSON for both success and error cases. The extension doesn't throw exceptions on CLI errors (authentication, init required, etc.) but instead displays helpful tooltips. This provides a better UX than error notifications.
+
+**Status Bar Priority & Alignment:**
+The status bar item is right-aligned with priority 100 to ensure visibility next to other common items like notifications and language mode indicator.
+
+**Tooltip Formatting:**
+Tooltips use VS Code's MarkdownString with theme icons (`$(error)`, `$(warning)`, etc.) and emojis for intuitive visual feedback. Progress bars are rendered with Unicode characters (● for filled, ○ for empty) which display correctly in all contexts.
+
 ## Known Limitations
 
 - Requires Claude Code CLI to be installed and authenticated
 - Shell script approach is Unix/Linux/macOS specific (tmux dependency)
 - No Windows support without WSL or similar Unix environment
 - Single metric (CLI usage) vs parent's dual metrics
+- Extension state is not persisted; usage data is re-fetched on each refresh
 
 ## Relationship to Parent Extension
 
