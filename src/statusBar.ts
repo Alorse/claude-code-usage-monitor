@@ -101,7 +101,7 @@ export class StatusBarManager {
 
     /**
      * Create a formatted status section for the tooltip
-     * Shows Claude version, plan, and active MCP servers
+     * Shows Claude version, plan, and active MCP servers (one per line)
      * @returns Formatted HTML string for the status section
      */
     private createStatusSection(): string {
@@ -111,20 +111,35 @@ export class StatusBarManager {
 
         const status = this.usageData.status;
 
-        const sectionDiv = '<br /><div style="padding:10px;border-top:1px solid #ddd;margin-top:10px">';
-        const versionLine = `<small style="font-size:10px;line-height:1.5;"><strong>Claude Code </strong> v${status.version} | `;
-        const planLine = ` ${status.login_method}<br/>`;
+        // Build the section container with top border
+        const sectionDiv = '<div style="padding:10px;border-top:1px solid #ddd;margin-top:10px">';
 
-        let mcpLine = '';
+        // Add version and plan info on first line
+        const versionLine = `<small style="font-size:10px;line-height:1.5;"><strong>Claude Code</strong> v${status.version}`;
+
+        // Add plan/login method on second line
+        const planLine = ` | ${status.login_method}<br/>`;
+
+        // Build MCP servers list - one per line with checkmark
+        let mcpContent = '';
         if (status.mcp_servers && status.mcp_servers.length > 0) {
-            mcpLine = `<strong>MCP Servers:</strong> ${status.mcp_servers.join('✔ , ')}</small>`;
+            mcpContent = '<strong>MCP Servers:</strong><br/>';
+
+            // Add each MCP server on its own line with a checkmark icon
+            status.mcp_servers.forEach((server) => {
+                mcpContent += `&nbsp;&nbsp;✔ ${server}<br/>`;
+            });
+
+            mcpContent += '</small>';
         } else {
-            mcpLine = '</small>';
+            mcpContent = '</small>';
         }
+
+        // Close the div
         const closingDiv = '</div>';
 
         // Combine all parts
-        return sectionDiv + versionLine + planLine + mcpLine + closingDiv + '\n\n';
+        return sectionDiv + versionLine + planLine + mcpContent + closingDiv + '\n\n';
     }
 
     /**
